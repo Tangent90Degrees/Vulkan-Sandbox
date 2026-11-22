@@ -60,6 +60,15 @@ private:
     VkImageView   depth_img_view_       = nullptr;
     VmaAllocation depth_img_allocation_ = nullptr;
 
+    // graphics pipeline related
+    VkPipeline       pipeline_        = nullptr;
+    VkPipelineLayout pipeline_layout_ = nullptr;
+
+    // shader resources
+    VkShaderModule vert_shader_ = nullptr;
+    VkShaderModule frag_shader_ = nullptr;
+
+
     bool initialize_Vulkan();
     bool create_Vulkan_instance();
     bool create_surface();
@@ -73,7 +82,12 @@ private:
     bool find_graphics_queue();
     bool create_shaders();
 
-    static void show_error_message(const char *message);
+    [[nodiscard]] VkShaderModule create_shader_module(
+        const std::string & filename,
+        shaderc_shader_kind kind
+    ) const;
+
+    VkPipeline create_gfx_pipeline();
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
         VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,

@@ -2,8 +2,8 @@
 // Created by Victor Liu on 11/21/26.
 //
 
-#include <iostream>
 #include <SDL3/SDL_vulkan.h>
+#include "utils.h"
 
 
 #define VOLK_IMPLEMENTATION
@@ -105,6 +105,12 @@ bool Application::initialize_Vulkan() {
 
     if (!create_shaders()) {
         show_error_message("Error creating shader modules");
+        return false;
+    }
+
+    pipeline_ = create_gfx_pipeline();
+    if (!pipeline_) {
+        show_error_message("Unable to initialize the graphics pipeline");
         return false;
     }
 }
@@ -500,12 +506,95 @@ bool Application::find_graphics_queue() {
 
 
 bool Application::create_shaders() {
+    // create the shader modules that we will need for the graphics pipeline
+    vert_shader_ = create_shader_module("shader.vert", shaderc_vertex_shader);
+    if (!vert_shader_) return false;
+    frag_shader_ = create_shader_module("shader.frag", shaderc_fragment_shader);
+    if (!frag_shader_) return false;
+    return true;
 }
 
 
-void Application::show_error_message(const char *message) {
-    std::cerr << message << std::endl;
+VkShaderModule Application::create_shader_module(
+    const std::string &       filename,
+    const shaderc_shader_kind kind
+) const {
+    // read shader file from disk
+    const auto        shader_path = std::filesystem::path("src/shaders/") / filename;
+    const std::string shader_src  = read_text_file(shader_path);
+    if (shader_src.empty()) {
+        show_error_message("Specified shader file does not exist: ", shader_path.string());
+        return nullptr;
+    }
+
+    // compile the shader to SPIR-V
+    std::cout << "Compiling shader: " << shader_path << std::endl;
+    const shaderc::Compiler compiler;
+    shaderc::CompileOptions opts;
+    opts.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_4);
+    opts.SetTargetSpirv(shaderc_spirv_version_1_6);
+    opts.SetOptimizationLevel(shaderc_optimization_level_performance);
+    const shaderc::CompilationResult res =
+        compiler.CompileGlslToSpv(shader_src, kind, filename.c_str(), opts);
+
+    if (res.GetCompilationStatus() != shaderc_compilation_status_success) {
+        show_error_message("Shader Compilation Error: ", res.GetErrorMessage());
+        return nullptr;
+    }
+
+    const size_t shader_size = (res.cend() - res.cbegin()) * sizeof(uint32_t);
+
+    // pass SPIR-V to Vulkan and create shader-module
+    const VkShaderModuleCreateInfo module_create_info {
+        .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = shader_size,
+        .pCode    = res.cbegin(),
+    };
+
+    VkShaderModule shader_module = nullptr;
+    if (vkCreateShaderModule(device_, &module_create_info, nullptr, &shader_module) != VK_SUCCESS) {
+        show_error_message("Failed to create shader module");
+        return nullptr;
+    }
+    return shader_module;
 }
+
+
+VkPipeline Application::create_gfx_pipeline() {
+    // need to define a pipeline layout
+    constexpr VkPipelineLayoutCreateInfo pipeline_layout_info {
+        .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount         = 0,
+        .pushConstantRangeCount = 0
+    };
+
+    if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr, &pipeline_layout_)
+        != VK_SUCCESS) {
+        show_error_message("Failed to create pipeline layout");
+        return nullptr;
+    }
+
+    // configure the shader stages struct
+    constexpr auto entry_point = "main";
+
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages {
+        {
+            .sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage  = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vert_shader_,
+            .pName  = entry_point
+        },
+        {
+            .sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage  = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = frag_shader_,
+            .pName  = entry_point
+        }
+    };
+
+    //
+}
+
 
 VkBool32 Application::debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
@@ -514,7 +603,7 @@ VkBool32 Application::debug_callback(
     void *                                      user_data
 ) {
     if (message_severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-        std::cerr << "Validation Layer: " << callback_data->pMessage << std::endl;
+        show_error_message("Validation Layer: ", callback_data->pMessage);
     }
     return VK_FALSE;
 }
